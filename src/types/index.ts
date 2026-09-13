@@ -84,6 +84,8 @@ export interface Reservation {
   is_vip: boolean;
   status: ReservationStatus;
   notes: string | null;
+  estimated_spend: number;
+  actual_spend: number;
   created_at: string;
   updated_at: string;
   client?: Client;

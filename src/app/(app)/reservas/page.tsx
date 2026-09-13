@@ -68,8 +68,10 @@ export default function ReservasPage() {
                 </Badge>
               </div>
 
-              <div className="mt-3 flex gap-4 text-sm text-zinc-400">
+              <div className="mt-3 flex flex-wrap gap-4 text-sm text-zinc-400">
                 <span>{res.people_count} personas</span>
+                <span>Pedido: {res.estimated_spend ?? 0}€</span>
+                <span>Final: {res.actual_spend ?? 0}€</span>
                 {res.is_vip && (
                   <span className="text-amber-400">VIP</span>
                 )}

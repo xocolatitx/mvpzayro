@@ -1,13 +1,6 @@
 "use client";
 
 import { create } from "zustand";
-import {
-  DEMO_CLIENTS,
-  DEMO_EVENTS,
-  DEMO_GROUPS,
-  DEMO_RESERVATIONS,
-  DEMO_RRPP,
-} from "@/lib/data/demo-data";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
 import { getClientTier } from "@/lib/zayro-score";
 import type {
@@ -20,22 +13,37 @@ import type {
   RrppMember,
 } from "@/types";
 
+type PendingSyncType =
+  | "client-create"
+  | "client-update"
+  | "client-delete"
+  | "event-create"
+  | "reservation-create"
+  | "reservation-status";
+
+type PendingSyncEntry = {
+  type: PendingSyncType;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
 interface CrmStore {
   clients: Client[];
   groups: Group[];
   events: Event[];
   reservations: Reservation[];
   rrppMembers: RrppMember[];
-  pendingSync: CreateClientInput[];
+  pendingSync: PendingSyncEntry[];
   hydrateFromSupabase: () => Promise<void>;
   addClient: (input: CreateClientInput) => Promise<Client>;
   updateClient: (id: string, data: Partial<Client>) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
-  addEvent: (event: Omit<Event, "id" | "created_at">) => Event;
+  addEvent: (event: Omit<Event, "id" | "created_at">) => Promise<Event>;
   addReservation: (
     data: Omit<Reservation, "id" | "created_at" | "updated_at">
-  ) => Reservation;
-  updateReservationStatus: (id: string, status: ReservationStatus) => void;
+  ) => Promise<Reservation> | Reservation;
+  updateReservationStatus: (id: string, status: ReservationStatus) => Promise<void> | void;
+  retryPendingSync: () => Promise<void>;
   registerOuting: (clientId: string, isVip?: boolean) => void;
 }
 
@@ -61,13 +69,82 @@ const statusToUi = {
 
 const eventTypeToClub = { club: "club" } as const;
 
-export const useCrmStore = create<CrmStore>()((set) => ({
-  clients: DEMO_CLIENTS,
-  groups: DEMO_GROUPS,
-  events: DEMO_EVENTS,
-  reservations: DEMO_RESERVATIONS,
-  rrppMembers: DEMO_RRPP,
+export const useCrmStore = create<CrmStore>()((set, get) => ({
+  clients: [],
+  groups: [],
+  events: [],
+  reservations: [],
+  rrppMembers: [],
   pendingSync: [],
+
+  retryPendingSync: async () => {
+    const supabase = createSupabaseClient();
+    if (!supabase) return;
+
+    const queue = [...get().pendingSync];
+    if (!queue.length) return;
+
+    const nextQueue: PendingSyncEntry[] = [];
+
+    for (const item of queue) {
+      const type = item.type;
+      if (type === "client-create" && item.payload.name) {
+        const { error } = await supabase
+          .from("clients")
+          .insert(item.payload);
+        if (!error) continue;
+      }
+
+      if (type === "client-update" && typeof item.payload.id === "string") {
+        const { error } = await supabase
+          .from("clients")
+          .update(item.payload)
+          .eq("id", String(item.payload.id));
+        if (!error) continue;
+      }
+
+      if (type === "client-delete" && typeof item.payload.id === "string") {
+        const { error } = await supabase
+          .from("clients")
+          .delete()
+          .eq("id", String(item.payload.id));
+        if (!error) continue;
+      }
+
+      if (type === "event-create" && item.payload.name) {
+        const { error } = await supabase
+          .from("events")
+          .insert(item.payload);
+        if (!error) continue;
+      }
+
+      if (type === "reservation-create" && item.payload.client_id) {
+        const { error } = await supabase
+          .from("reservations")
+          .insert(item.payload);
+        if (!error) continue;
+      }
+
+      if (type === "reservation-status" && typeof item.payload.id === "string") {
+        const { error } = await supabase
+          .from("reservations")
+          .update({
+            status: item.payload.status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", String(item.payload.id));
+        if (!error) continue;
+      }
+
+      nextQueue.push(item);
+    }
+
+    if (nextQueue.length !== queue.length) {
+      await get().hydrateFromSupabase();
+    }
+
+    set({ pendingSync: nextQueue });
+  },
 
   hydrateFromSupabase: async () => {
     const supabase = createSupabaseClient();
@@ -244,6 +321,8 @@ export const useCrmStore = create<CrmStore>()((set) => ({
           is_vip: String(row.reservation_type ?? "entry") === "vip",
           status: statusToUi[String(row.status) as keyof typeof statusToUi] ?? "pendiente",
           notes: typeof row.notes === "string" ? row.notes : null,
+          estimated_spend: Number(row.estimated_spend ?? 0),
+          actual_spend: Number(row.actual_spend ?? 0),
           created_at:
             typeof row.created_at === "string"
               ? row.created_at
@@ -297,8 +376,9 @@ export const useCrmStore = create<CrmStore>()((set) => ({
 
   addClient: async (input) => {
     const now = new Date().toISOString();
+    const clientId = generateId();
     const client: Client = {
-      id: generateId(),
+      id: clientId,
       name: input.name,
       phone: input.phone ?? null,
       type: input.type ?? "nuevo",
@@ -310,7 +390,7 @@ export const useCrmStore = create<CrmStore>()((set) => ({
       is_vip: input.is_vip ?? false,
       zayro_score: 0,
       notes: input.notes ?? null,
-      rrpp_id: input.rrpp_id ?? DEMO_RRPP[0]?.id ?? null,
+      rrpp_id: input.rrpp_id ?? null,
       group_id: input.group_id ?? null,
       outings_count: 0,
       vip_count: 0,
@@ -320,7 +400,6 @@ export const useCrmStore = create<CrmStore>()((set) => ({
       created_at: now,
       updated_at: now,
     };
-    set((s) => ({ clients: [client, ...s.clients] }));
 
     const supabase = createSupabaseClient();
     if (supabase) {
@@ -329,10 +408,11 @@ export const useCrmStore = create<CrmStore>()((set) => ({
       const first_name = nameParts.shift() ?? fullName;
       const last_name = nameParts.join(" ");
 
+      const universityQuery = input.university ?? "";
       const { data: universityByName } = await supabase
         .from("universities")
         .select("id")
-        .eq("name", input.university ?? "")
+        .or(`name.eq.${universityQuery},short_name.eq.${universityQuery}`)
         .maybeSingle();
 
       const { data: venueByName } = await supabase
@@ -364,24 +444,29 @@ export const useCrmStore = create<CrmStore>()((set) => ({
       };
 
       const { error } = await supabase.from("clients").insert(payload);
-      if (error) {
-        set((s) => ({ pendingSync: [...s.pendingSync, input] }));
+      if (!error) {
+        await useCrmStore.getState().hydrateFromSupabase();
+        return client;
       }
+
+      set((s) => ({
+        pendingSync: [
+          ...s.pendingSync,
+          {
+            type: "client-create",
+            payload: input as unknown as Record<string, unknown>,
+            createdAt: now,
+          },
+        ],
+      }));
     }
 
+    set((s) => ({ clients: [client, ...s.clients] }));
     return client;
   },
 
   updateClient: async (id, data) => {
     const now = new Date().toISOString();
-    set((s) => ({
-      clients: s.clients.map((c) =>
-        c.id === id
-          ? { ...c, ...data, updated_at: now }
-          : c
-      ),
-    }));
-
     const supabase = createSupabaseClient();
     if (!supabase) return;
 
@@ -403,10 +488,11 @@ export const useCrmStore = create<CrmStore>()((set) => ({
     if (data.last_activity_at !== undefined) payload.last_activity_at = data.last_activity_at;
 
     if (data.university !== undefined) {
+      const universityQuery = data.university ?? "";
       const { data: universityRow } = await supabase
         .from("universities")
         .select("id")
-        .eq("name", data.university ?? "")
+        .or(`name.eq.${universityQuery},short_name.eq.${universityQuery}`)
         .maybeSingle();
       payload.university_id = universityRow?.id ?? null;
     }
@@ -423,87 +509,153 @@ export const useCrmStore = create<CrmStore>()((set) => ({
     payload.updated_at = now;
 
     const { error } = await supabase.from("clients").update(payload).eq("id", id);
-    if (error) {
-      set((s) => ({ pendingSync: [...s.pendingSync, { name: String(data.name ?? "") }] }));
+    if (!error) {
+      await useCrmStore.getState().hydrateFromSupabase();
+      return;
     }
+
+    set((s) => ({
+      pendingSync: [
+        ...s.pendingSync,
+        {
+          type: "client-update",
+          payload: { id, ...data } as Record<string, unknown>,
+          createdAt: now,
+        },
+      ],
+    }));
   },
 
   deleteClient: async (id) => {
-    set((s) => ({
-      clients: s.clients.filter((c) => c.id !== id),
-    }));
-
     const supabase = createSupabaseClient();
     if (!supabase) return;
 
-    await supabase.from("clients").delete().eq("id", id);
+    const { error } = await supabase.from("clients").delete().eq("id", id);
+    if (!error) {
+      await useCrmStore.getState().hydrateFromSupabase();
+      return;
+    }
+
+    set((s) => ({
+      pendingSync: [
+        ...s.pendingSync,
+        {
+          type: "client-delete",
+          payload: { id } as Record<string, unknown>,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }));
   },
 
-  addEvent: (event) => {
+  addEvent: async (event) => {
     const now = new Date().toISOString();
     const newEvent: Event = {
       ...event,
       id: generateId(),
       created_at: now,
     };
-    set((s) => ({ events: [newEvent, ...s.events] }));
 
     const supabase = createSupabaseClient();
-    if (supabase) {
-      void (async () => {
-        const { data: venue } = await supabase
-          .from("venues")
-          .select("id")
-          .eq("name", event.club)
-          .maybeSingle();
-
-        const { data: rrppProfile } = await supabase
-          .from("rrpp_profiles")
-          .select("profile_id")
-          .eq("id", event.rrpp_id ?? "")
-          .maybeSingle();
-
-        const payload = {
-          id: newEvent.id,
-          name: event.name,
-          venue_id: venue?.id ?? null,
-          event_date: event.event_date,
-          day_of_week: event.day_of_week,
-          event_type: "club",
-          status: "draft",
-          notes: null,
-          created_by: rrppProfile?.profile_id ?? null,
-          created_at: now,
-          updated_at: now,
-        };
-
-        void supabase.from("events").insert(payload);
-      })();
+    if (!supabase) {
+      set((s) => ({ events: [newEvent, ...s.events] }));
+      return newEvent;
     }
 
+    let venueId: string | null = null;
+
+    const venueLookup = await supabase
+      .from("venues")
+      .select("id")
+      .eq("name", event.club)
+      .maybeSingle();
+
+    if (venueLookup.data?.id) {
+      venueId = String(venueLookup.data.id);
+    } else {
+      const fallbackVenue = {
+        name: event.club,
+        city: "Valencia",
+        instagram: `@${event.club.toLowerCase().replace(/\s+/g, "")}`,
+        active: true,
+        notes: "Created from CRM event form",
+      };
+
+      const fallbackInsert = await supabase
+        .from("venues")
+        .insert(fallbackVenue)
+        .select("id")
+        .maybeSingle();
+
+      if (!fallbackInsert.error && fallbackInsert.data?.id) {
+        venueId = String(fallbackInsert.data.id);
+      }
+    }
+
+    const rrppLookup = await supabase
+      .from("rrpp_profiles")
+      .select("profile_id")
+      .eq("id", event.rrpp_id ?? "")
+      .maybeSingle();
+
+    const payload = {
+      id: newEvent.id,
+      name: event.name,
+      venue_id: venueId,
+      event_date: event.event_date,
+      day_of_week: event.day_of_week,
+      event_type: "club",
+      status: "draft",
+      notes: null,
+      created_by: rrppLookup.data?.profile_id ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { error } = await supabase.from("events").insert(payload);
+    if (!error) {
+      await useCrmStore.getState().hydrateFromSupabase();
+      return newEvent;
+    }
+
+    console.warn("No se pudo sincronizar el evento remoto", error.message);
+    set((s) => ({
+      events: [newEvent, ...s.events],
+      pendingSync: [
+        ...s.pendingSync,
+        {
+          type: "event-create",
+          payload: {
+            id: newEvent.id,
+            name: event.name,
+            club: event.club,
+            event_date: event.event_date,
+            day_of_week: event.day_of_week,
+            rrpp_id: event.rrpp_id,
+            entries_count: event.entries_count,
+            vip_count: event.vip_count,
+            reservations_count: event.reservations_count,
+            revenue_estimate: event.revenue_estimate,
+            created_at: now,
+          } as Record<string, unknown>,
+          createdAt: now,
+        },
+      ],
+    }));
     return newEvent;
   },
 
   addReservation: (data) => {
     const now = new Date().toISOString();
+    const reservationId = generateId();
     const reservation: Reservation = {
       ...data,
-      id: generateId(),
+      id: reservationId,
+      estimated_spend: data.estimated_spend ?? 0,
+      actual_spend: data.actual_spend ?? 0,
       created_at: now,
       updated_at: now,
     };
-    set((s) => ({
-      reservations: [reservation, ...s.reservations],
-      clients: s.clients.map((c) =>
-        c.id === data.client_id
-          ? {
-              ...c,
-              reservations_count: c.reservations_count + 1,
-              last_activity_at: now,
-            }
-          : c
-      ),
-    }));
 
     const supabase = createSupabaseClient();
     if (supabase) {
@@ -530,36 +682,89 @@ export const useCrmStore = create<CrmStore>()((set) => ({
           reservation_type: data.is_vip ? "vip" : "entry",
           status: statusToRemote[data.status],
           table_number: null,
-          estimated_spend: 0,
-          actual_spend: 0,
+          estimated_spend: data.estimated_spend ?? 0,
+          actual_spend: data.actual_spend ?? 0,
           notes: data.notes,
           created_at: now,
           updated_at: now,
         };
 
-        await supabase.from("reservations").insert(payload);
+        const { error } = await supabase.from("reservations").insert(payload);
+        if (!error) {
+          await useCrmStore.getState().hydrateFromSupabase();
+          return;
+        }
+
+        set((s) => ({
+          reservations: [reservation, ...s.reservations],
+          clients: s.clients.map((c) =>
+            c.id === data.client_id
+              ? {
+                  ...c,
+                  reservations_count: c.reservations_count + 1,
+                  last_activity_at: now,
+                }
+              : c
+          ),
+          pendingSync: [
+            ...s.pendingSync,
+            {
+              type: "reservation-create",
+              payload: {
+                ...payload,
+                reservation_type: data.is_vip ? "vip" : "entry",
+                estimated_spend: data.estimated_spend ?? 0,
+                actual_spend: data.actual_spend ?? 0,
+              } as Record<string, unknown>,
+              createdAt: now,
+            },
+          ],
+        }));
       })();
+      return reservation;
     }
+
+    set((s) => ({
+      reservations: [reservation, ...s.reservations],
+      clients: s.clients.map((c) =>
+        c.id === data.client_id
+          ? {
+              ...c,
+              reservations_count: c.reservations_count + 1,
+              last_activity_at: now,
+            }
+          : c
+      ),
+    }));
 
     return reservation;
   },
 
-  updateReservationStatus: (id, status) => {
-    set((s) => ({
-      reservations: s.reservations.map((r) =>
-        r.id === id
-          ? { ...r, status, updated_at: new Date().toISOString() }
-          : r
-      ),
-    }));
-
+  updateReservationStatus: async (id, status) => {
     const supabase = createSupabaseClient();
     if (!supabase) return;
 
-    void supabase
+    const now = new Date().toISOString();
+    const { error } = await supabase
       .from("reservations")
-      .update({ status: statusToRemote[status], updated_at: new Date().toISOString() })
+      .update({ status: statusToRemote[status], updated_at: now })
       .eq("id", id);
+
+    if (!error) {
+      await useCrmStore.getState().hydrateFromSupabase();
+      return;
+    }
+
+    set((s) => ({
+      pendingSync: [
+        ...s.pendingSync,
+        {
+          type: "reservation-status",
+          payload: { id, status: statusToRemote[status] } as Record<string, unknown>,
+          createdAt: now,
+        },
+      ],
+    }));
   },
 
   registerOuting: (clientId, isVip = false) => {

@@ -1,11 +1,21 @@
 import type { ClientType, PreferredDay, ReservationStatus } from "@/types";
 
-export const CLUBS = ["Bandido", "Mucho", "Sala Moon", "Marina Beach"] as const;
+export const CLUBS = [
+  "Bandido",
+  "Mucho",
+  "Committe",
+  "Marina Beach",
+  "Indiana",
+  "Akuarela",
+  "Mya",
+] as const;
 
 export const UNIVERSITIES = [
   "UV",
   "UPV",
   "UJI",
+  "Europea",
+  "CEU",
   "Erasmus",
   "Otra",
 ] as const;

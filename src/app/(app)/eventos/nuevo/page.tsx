@@ -48,16 +48,20 @@ export default function NuevoEventoPage() {
       <h1 className="text-xl font-black">NUEVO EVENTO</h1>
 
       <form
-        onSubmit={handleSubmit((data) => {
-          addEvent({
-            ...data,
-            rrpp_id: rrpp?.id ?? null,
-            entries_count: 0,
-            vip_count: 0,
-            reservations_count: 0,
-            revenue_estimate: 0,
-          });
-          router.push("/eventos");
+        onSubmit={handleSubmit(async (data) => {
+          try {
+            await addEvent({
+              ...data,
+              rrpp_id: rrpp?.id ?? null,
+              entries_count: 0,
+              vip_count: 0,
+              reservations_count: 0,
+              revenue_estimate: 0,
+            });
+            router.push("/eventos");
+          } catch (error) {
+            console.error("No se pudo crear el evento", error);
+          }
         })}
         className="space-y-4"
       >
