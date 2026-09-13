@@ -19,8 +19,8 @@ export default function NuevoClientePage() {
 
       <ClientForm
         submitLabel="Guardar cliente"
-        onSubmit={(data) => {
-          const client = addClient(data);
+        onSubmit={async (data) => {
+          const client = await addClient(data);
           router.push(`/clientes/${client.id}`);
         }}
       />

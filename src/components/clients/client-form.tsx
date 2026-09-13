@@ -1,6 +1,6 @@
 "use client";
 
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -30,7 +30,7 @@ type FormData = z.infer<typeof schema>;
 
 interface ClientFormProps {
   defaultValues?: Partial<Client>;
-  onSubmit: (data: CreateClientInput) => void;
+  onSubmit: (data: CreateClientInput) => void | Promise<void>;
   submitLabel?: string;
 }
 
@@ -43,7 +43,7 @@ export function ClientForm({
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -58,19 +58,21 @@ export function ClientForm({
     },
   });
 
-  const preferredDay = watch("preferred_day");
-  const isVip = watch("is_vip");
+  const preferredDay = useWatch({ control, name: "preferred_day" });
+  const isVip = useWatch({ control, name: "is_vip" });
+  const university = useWatch({ control, name: "university" });
+  const usualClub = useWatch({ control, name: "usual_club" });
 
   return (
     <form
-      onSubmit={handleSubmit((data) =>
-        onSubmit({
+      onSubmit={handleSubmit(async (data) => {
+        await onSubmit({
           ...data,
           phone: data.phone || undefined,
           university: data.university || undefined,
           usual_club: data.usual_club || undefined,
-        })
-      )}
+        });
+      })}
       className="space-y-4"
     >
       <div className="space-y-2">
@@ -101,7 +103,7 @@ export function ClientForm({
       <div className="space-y-2">
         <Label>Universidad</Label>
         <Select
-          value={watch("university") || ""}
+          value={university || ""}
           onValueChange={(v) => setValue("university", v ?? undefined)}
         >
           <SelectTrigger className="border-white/10 bg-zinc-900">
@@ -139,7 +141,7 @@ export function ClientForm({
       <div className="space-y-2">
         <Label>Club habitual</Label>
         <Select
-          value={watch("usual_club") || ""}
+          value={usualClub || ""}
           onValueChange={(v) => setValue("usual_club", v ?? undefined)}
         >
           <SelectTrigger className="border-white/10 bg-zinc-900">

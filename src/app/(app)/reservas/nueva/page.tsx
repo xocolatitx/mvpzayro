@@ -2,7 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -40,7 +40,7 @@ function NuevaReservaForm() {
     register,
     handleSubmit,
     setValue,
-    watch,
+    control,
     formState: { isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -52,7 +52,10 @@ function NuevaReservaForm() {
     },
   });
 
-  const isVip = watch("is_vip");
+  const clientId = useWatch({ control, name: "client_id" });
+  const eventId = useWatch({ control, name: "event_id" });
+  const status = useWatch({ control, name: "status" });
+  const isVip = useWatch({ control, name: "is_vip" });
 
   return (
     <form
@@ -73,7 +76,7 @@ function NuevaReservaForm() {
       <div className="space-y-2">
         <Label>Cliente</Label>
         <Select
-          value={watch("client_id")}
+          value={clientId}
           onValueChange={(v) => setValue("client_id", v ?? "")}
         >
           <SelectTrigger className="border-white/10 bg-zinc-900">
@@ -92,7 +95,7 @@ function NuevaReservaForm() {
       <div className="space-y-2">
         <Label>Evento (opcional)</Label>
         <Select
-          value={watch("event_id") || ""}
+          value={eventId || ""}
           onValueChange={(v) => setValue("event_id", v ?? undefined)}
         >
           <SelectTrigger className="border-white/10 bg-zinc-900">
@@ -133,7 +136,7 @@ function NuevaReservaForm() {
       <div className="space-y-2">
         <Label>Estado</Label>
         <Select
-          value={watch("status")}
+          value={status}
           onValueChange={(v) =>
             setValue("status", v as FormData["status"])
           }

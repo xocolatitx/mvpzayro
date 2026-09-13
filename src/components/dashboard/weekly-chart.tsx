@@ -9,15 +9,7 @@ import {
   YAxis,
 } from "recharts";
 
-const data = [
-  { name: "Lun", clientes: 12 },
-  { name: "Mar", clientes: 8 },
-  { name: "Mié", clientes: 15 },
-  { name: "Jue", clientes: 22 },
-  { name: "Vie", clientes: 47 },
-  { name: "Sáb", clientes: 38 },
-  { name: "Dom", clientes: 5 },
-];
+const data: Array<Record<string, number | string>> = [];
 
 export function WeeklyChart() {
   return (

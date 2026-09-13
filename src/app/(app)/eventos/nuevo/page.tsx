@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,7 @@ export default function NuevoEventoPage() {
   const addEvent = useCrmStore((s) => s.addEvent);
   const rrpp = useCrmStore((s) => s.rrppMembers[0]);
 
-  const { register, handleSubmit, setValue, watch, formState: { isSubmitting } } =
+  const { register, handleSubmit, setValue, control, formState: { isSubmitting } } =
     useForm<FormData>({
       resolver: zodResolver(schema),
       defaultValues: {
@@ -39,6 +39,9 @@ export default function NuevoEventoPage() {
         day_of_week: "viernes",
       },
     });
+
+  const club = useWatch({ control, name: "club" });
+  const dayOfWeek = useWatch({ control, name: "day_of_week" });
 
   return (
     <div className="space-y-4">
@@ -71,7 +74,7 @@ export default function NuevoEventoPage() {
         <div className="space-y-2">
           <Label>Club</Label>
           <Select
-            value={watch("club") || ""}
+            value={club || ""}
             onValueChange={(v) => setValue("club", v ?? "")}
           >
             <SelectTrigger className="border-white/10 bg-zinc-900">
@@ -100,7 +103,7 @@ export default function NuevoEventoPage() {
         <div className="space-y-2">
           <Label>Día</Label>
           <Select
-            value={watch("day_of_week")}
+            value={dayOfWeek}
             onValueChange={(v) =>
               setValue("day_of_week", v as FormData["day_of_week"])
             }

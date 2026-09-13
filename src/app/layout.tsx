@@ -34,7 +34,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="es" className={`${inter.variable} dark h-full`}>
-      <body className="min-h-dvh bg-black font-sans text-white antialiased">
+      <body
+        className="min-h-dvh bg-black font-sans text-white antialiased"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>

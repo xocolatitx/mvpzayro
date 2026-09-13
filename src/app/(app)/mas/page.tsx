@@ -5,24 +5,21 @@ import {
   Crown,
   Database,
   Download,
-  RotateCcw,
   Users,
   Wifi,
   WifiOff,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
-import { useCrmStore } from "@/stores/crm-store";
 import { useEffect, useState } from "react";
 
 export default function MasPage() {
-  const resetDemo = useCrmStore((s) => s.resetDemo);
-  const [online, setOnline] = useState(true);
+  const [online, setOnline] = useState<boolean>(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine
+  );
   const supabaseReady = isSupabaseConfigured();
 
   useEffect(() => {
-    setOnline(navigator.onLine);
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     window.addEventListener("online", onOnline);
@@ -103,19 +100,6 @@ export default function MasPage() {
           <p>Alta frecuencia: +5</p>
         </div>
       </section>
-
-      <Button
-        variant="outline"
-        className="w-full border-white/10"
-        onClick={() => {
-          if (confirm("¿Restaurar datos demo? Se perderán los cambios locales.")) {
-            resetDemo();
-          }
-        }}
-      >
-        <RotateCcw className="mr-2 h-4 w-4" />
-        Restaurar datos demo
-      </Button>
 
       <p className="text-center text-xs text-zinc-600">
         ZAYRO CRM v1 · MVP

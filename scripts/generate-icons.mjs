@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -14,8 +14,6 @@ const png1x1 = Buffer.from(
 
 writeFileSync(join(outDir, "icon-192.png"), png1x1);
 writeFileSync(join(outDir, "icon-512.png"), png1x1);
-
-const svg = readFileSync(join(outDir, "icon.svg"));
 writeFileSync(join(outDir, "..", "favicon.ico"), png1x1);
 
 console.log("Icons generated in public/icons/");
