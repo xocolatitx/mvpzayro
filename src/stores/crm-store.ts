@@ -27,6 +27,7 @@ interface CrmStore {
   reservations: Reservation[];
   rrppMembers: RrppMember[];
   pendingSync: CreateClientInput[];
+  hydrateFromSupabase: () => Promise<void>;
   addClient: (input: CreateClientInput) => Promise<Client>;
   updateClient: (id: string, data: Partial<Client>) => void;
   deleteClient: (id: string) => void;
@@ -49,6 +50,40 @@ export const useCrmStore = create<CrmStore>()((set) => ({
   reservations: DEMO_RESERVATIONS,
   rrppMembers: DEMO_RRPP,
   pendingSync: [],
+
+  hydrateFromSupabase: async () => {
+    const supabase = createSupabaseClient();
+    if (!supabase) return;
+
+    const { data, error } = await supabase.from("clients").select("*");
+    if (error || !data) return;
+
+    const hydrated = data.map((row: any): Client => ({
+      id: String(row.id),
+      name: String(row.name ?? ""),
+      phone: row.phone ?? null,
+      type: row.type ?? "nuevo",
+      university: row.university ?? null,
+      origin: row.origin ?? "España",
+      preferred_day: row.preferred_day ?? "viernes",
+      usual_club: row.usual_club ?? null,
+      usual_group_size: Number(row.usual_group_size ?? 1),
+      is_vip: Boolean(row.is_vip),
+      zayro_score: Number(row.zayro_score ?? 0),
+      notes: row.notes ?? null,
+      rrpp_id: row.rrpp_id ?? null,
+      group_id: row.group_id ?? null,
+      outings_count: Number(row.outings_count ?? 0),
+      vip_count: Number(row.vip_count ?? 0),
+      reservations_count: Number(row.reservations_count ?? 0),
+      estimated_spend: Number(row.estimated_spend ?? 0),
+      last_activity_at: row.last_activity_at ?? new Date().toISOString(),
+      created_at: row.created_at ?? new Date().toISOString(),
+      updated_at: row.updated_at ?? new Date().toISOString(),
+    }));
+
+    set(() => ({ clients: hydrated }));
+  },
 
   addClient: async (input) => {
     const now = new Date().toISOString();
