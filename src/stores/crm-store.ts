@@ -29,8 +29,8 @@ interface CrmStore {
   pendingSync: CreateClientInput[];
   hydrateFromSupabase: () => Promise<void>;
   addClient: (input: CreateClientInput) => Promise<Client>;
-  updateClient: (id: string, data: Partial<Client>) => void;
-  deleteClient: (id: string) => void;
+  updateClient: (id: string, data: Partial<Client>) => Promise<void>;
+  deleteClient: (id: string) => Promise<void>;
   addEvent: (event: Omit<Event, "id" | "created_at">) => Event;
   addReservation: (
     data: Omit<Reservation, "id" | "created_at" | "updated_at">
@@ -42,6 +42,24 @@ interface CrmStore {
 function generateId(): string {
   return crypto.randomUUID();
 }
+
+const statusToRemote = {
+  pendiente: "pending",
+  confirmada: "confirmed",
+  asistio: "attended",
+  no_show: "no_show",
+  cancelada: "cancelled",
+} as const;
+
+const statusToUi = {
+  pending: "pendiente" as const,
+  confirmed: "confirmada" as const,
+  attended: "asistio" as const,
+  no_show: "no_show" as const,
+  cancelled: "cancelada" as const,
+} as const;
+
+const eventTypeToClub = { club: "club" } as const;
 
 export const useCrmStore = create<CrmStore>()((set) => ({
   clients: DEMO_CLIENTS,
@@ -55,34 +73,226 @@ export const useCrmStore = create<CrmStore>()((set) => ({
     const supabase = createSupabaseClient();
     if (!supabase) return;
 
-    const { data, error } = await supabase.from("clients").select("*");
-    if (error || !data) return;
+    const { data: universityRows } = await supabase.from("universities").select("id,name");
+    const universityNameById = new Map(
+      (universityRows ?? []).map((u: Record<string, unknown>) => [String(u.id), String(u.name)])
+    );
 
-    const hydrated = data.map((row: any): Client => ({
-      id: String(row.id),
-      name: String(row.name ?? ""),
-      phone: row.phone ?? null,
-      type: row.type ?? "nuevo",
-      university: row.university ?? null,
-      origin: row.origin ?? "España",
-      preferred_day: row.preferred_day ?? "viernes",
-      usual_club: row.usual_club ?? null,
-      usual_group_size: Number(row.usual_group_size ?? 1),
-      is_vip: Boolean(row.is_vip),
-      zayro_score: Number(row.zayro_score ?? 0),
-      notes: row.notes ?? null,
-      rrpp_id: row.rrpp_id ?? null,
-      group_id: row.group_id ?? null,
-      outings_count: Number(row.outings_count ?? 0),
-      vip_count: Number(row.vip_count ?? 0),
-      reservations_count: Number(row.reservations_count ?? 0),
-      estimated_spend: Number(row.estimated_spend ?? 0),
-      last_activity_at: row.last_activity_at ?? new Date().toISOString(),
-      created_at: row.created_at ?? new Date().toISOString(),
-      updated_at: row.updated_at ?? new Date().toISOString(),
+    const { data: venueRows } = await supabase.from("venues").select("id,name");
+    const venueNameById = new Map(
+      (venueRows ?? []).map((v: Record<string, unknown>) => [String(v.id), String(v.name)])
+    );
+
+    const { data: rrppProfileRows } = await supabase
+      .from("rrpp_profiles")
+      .select("id, profile_id");
+    const rrppIdByProfileId = new Map(
+      (rrppProfileRows ?? []).map((r: Record<string, unknown>) => [String(r.profile_id), String(r.id)])
+    );
+
+    const { data: groupMemberRows } = await supabase
+      .from("group_members")
+      .select("group_id, client_id, role");
+
+    const groupIdByClientId = new Map<string, string>();
+    for (const row of groupMemberRows ?? []) {
+      const r = row as Record<string, unknown>;
+      const clientId = String(r.client_id);
+      const groupId = String(r.group_id);
+      if (!groupIdByClientId.has(clientId)) {
+        groupIdByClientId.set(clientId, groupId);
+      }
+    }
+
+    const { data: reservationRowsForRoster } = await supabase
+      .from("reservations")
+      .select("client_id, rrpp_id");
+
+    const rrppIdByClientId = new Map<string, string>();
+    for (const row of reservationRowsForRoster ?? []) {
+      const r = row as Record<string, unknown>;
+      const clientId = String(r.client_id);
+      const rrppId = typeof r.rrpp_id === "string" ? String(r.rrpp_id) : null;
+      if (rrppId && !rrppIdByClientId.has(clientId)) {
+        rrppIdByClientId.set(clientId, rrppId);
+      }
+    }
+
+    const { data: clientRows, error: clientError } = await supabase
+      .from("clients")
+      .select("*");
+    if (clientError || !clientRows) return;
+
+    const hydratedClients = clientRows.map((row: Record<string, unknown>): Client => {
+      const firstName = String(row.first_name ?? "");
+      const lastName = String(row.last_name ?? "");
+      const name = `${firstName} ${lastName}`.trim() || "Cliente";
+
+      const universityId = typeof row.university_id === "string" ? row.university_id : null;
+      const preferredClubId = typeof row.preferred_club === "string" ? row.preferred_club : null;
+
+      return {
+        id: String(row.id),
+        name,
+        phone: typeof row.phone === "string" ? row.phone : null,
+        type: (row.type as Client["type"]) ?? "nuevo",
+        university: universityId ? universityNameById.get(universityId) ?? null : null,
+        origin: typeof row.origin === "string" ? row.origin : "España",
+        preferred_day: (row.preferred_day as Client["preferred_day"]) ?? "viernes",
+        usual_club: preferredClubId ? venueNameById.get(preferredClubId) ?? null : null,
+        usual_group_size: Number(row.usual_group_size ?? 1),
+        is_vip: Boolean(row.vip ?? row.is_vip),
+        zayro_score: Number(row.zayro_score ?? 0),
+        notes: typeof row.notes === "string" ? row.notes : null,
+        rrpp_id: rrppIdByClientId.get(String(row.id)) ?? null,
+        group_id: groupIdByClientId.get(String(row.id)) ?? null,
+        outings_count: Number(row.outings_count ?? 0),
+        vip_count: Number(row.vip_count ?? 0),
+        reservations_count: Number(row.reservations_count ?? 0),
+        estimated_spend: Number(row.estimated_spend ?? 0),
+        last_activity_at:
+          typeof row.last_activity_at === "string"
+            ? row.last_activity_at
+            : new Date().toISOString(),
+        created_at:
+          typeof row.created_at === "string"
+            ? row.created_at
+            : new Date().toISOString(),
+        updated_at:
+          typeof row.updated_at === "string"
+            ? row.updated_at
+            : new Date().toISOString(),
+      };
+    });
+
+    const { data: groupRows, error: groupError } = await supabase
+      .from("groups")
+      .select("*");
+
+    const membersByGroupId = new Map<string, string[]>();
+    const leadersByGroupId = new Map<string, string>();
+
+    for (const memberRow of groupMemberRows ?? []) {
+      const groupId = String((memberRow as Record<string, unknown>).group_id);
+      const clientId = String((memberRow as Record<string, unknown>).client_id);
+      const role = String((memberRow as Record<string, unknown>).role ?? "member");
+      const existing = membersByGroupId.get(groupId) ?? [];
+      membersByGroupId.set(groupId, [...existing, clientId]);
+      if (role === "leader") {
+        leadersByGroupId.set(groupId, clientId);
+      }
+    }
+
+    const hydratedGroups = !groupError && groupRows
+      ? groupRows.map((row: Record<string, unknown>): Group => {
+          const groupId = String(row.id);
+          const groupMemberIds = membersByGroupId.get(groupId) ?? [];
+          const groupLeaderId = leadersByGroupId.get(groupId) ?? (typeof row.leader_client_id === "string" ? row.leader_client_id : null);
+
+          return {
+            id: groupId,
+            name: String(row.name ?? "Grupo"),
+            usual_day: (row.usual_day as Group["usual_day"]) ?? "viernes",
+            avg_size: Number(row.usual_size ?? 1),
+            usual_club: null,
+            leader_client_id: groupLeaderId,
+            last_outing_at: null,
+            created_at:
+              typeof row.created_at === "string"
+                ? row.created_at
+                : new Date().toISOString(),
+            members: hydratedClients.filter((c) => groupMemberIds.includes(c.id)),
+            leader: hydratedClients.find((c) => c.id === groupLeaderId) ?? null,
+          };
+        })
+      : [];
+
+    const { data: eventRows, error: eventError } = await supabase
+      .from("events")
+      .select("*");
+
+    const { data: rrppRows, error: rrppError } = await supabase
+      .from("rrpp_profiles")
+      .select("*");
+
+    const hydratedRrpp = !rrppError && rrppRows
+      ? rrppRows.map((row: Record<string, unknown>): RrppMember => ({
+          id: String(row.id),
+          name: String(row.display_name ?? "RRPP"),
+          phone: typeof row.phone === "string" ? row.phone : null,
+          email: typeof row.email === "string" ? row.email : null,
+          commission_rate: Number(row.commission_value ?? 0),
+          active: Boolean(row.active),
+          created_at:
+            typeof row.created_at === "string"
+              ? row.created_at
+              : new Date().toISOString(),
+        }))
+      : [];
+
+    const { data: reservationRows, error: reservationError } = await supabase
+      .from("reservations")
+      .select("*");
+
+    const hydratedReservations = !reservationError && reservationRows
+      ? reservationRows.map((row: Record<string, unknown>): Reservation => ({
+          id: String(row.id),
+          client_id: String(row.client_id),
+          group_id: typeof row.group_id === "string" ? row.group_id : null,
+          event_id: typeof row.event_id === "string" ? row.event_id : null,
+          people_count: Number(row.people_count ?? 1),
+          is_vip: String(row.reservation_type ?? "entry") === "vip",
+          status: statusToUi[String(row.status) as keyof typeof statusToUi] ?? "pendiente",
+          notes: typeof row.notes === "string" ? row.notes : null,
+          created_at:
+            typeof row.created_at === "string"
+              ? row.created_at
+              : new Date().toISOString(),
+          updated_at:
+            typeof row.updated_at === "string"
+              ? row.updated_at
+              : new Date().toISOString(),
+        }))
+      : [];
+
+    const hydratedEvents = !eventError && eventRows
+      ? eventRows.map((row: Record<string, unknown>): Event => {
+          const rowEventId = String(row.id);
+          const eventReservations = hydratedReservations.filter((r) => r.event_id === rowEventId);
+          const vipReservations = eventReservations.filter((r) => r.is_vip);
+          const billing = eventReservations.reduce((sum, r) => {
+            return sum + (r.people_count * 35 + (r.is_vip ? 80 : 0));
+          }, 0);
+
+          return {
+            id: String(row.id),
+            name: String(row.name ?? "Evento"),
+            club: venueNameById.get(String(row.venue_id)) ?? "Club",
+            event_date: typeof row.event_date === "string" ? row.event_date : new Date().toISOString().split("T")[0],
+            day_of_week: (row.day_of_week as Event["day_of_week"]) ?? "viernes",
+            rrpp_id:
+              typeof row.created_by === "string"
+                ? rrppIdByProfileId.get(String(row.created_by)) ?? null
+                : null,
+            entries_count: eventReservations.length,
+            vip_count: vipReservations.length,
+            reservations_count: eventReservations.length,
+            revenue_estimate: billing,
+            created_at:
+              typeof row.created_at === "string"
+                ? row.created_at
+                : new Date().toISOString(),
+          };
+        })
+      : [];
+
+    set(() => ({
+      clients: hydratedClients,
+      events: hydratedEvents,
+      groups: hydratedGroups,
+      reservations: hydratedReservations,
+      rrppMembers: hydratedRrpp,
     }));
-
-    set(() => ({ clients: hydrated }));
   },
 
   addClient: async (input) => {
@@ -114,25 +324,40 @@ export const useCrmStore = create<CrmStore>()((set) => ({
 
     const supabase = createSupabaseClient();
     if (supabase) {
+      const fullName = input.name.trim();
+      const nameParts = fullName.split(/\s+/);
+      const first_name = nameParts.shift() ?? fullName;
+      const last_name = nameParts.join(" ");
+
+      const { data: universityByName } = await supabase
+        .from("universities")
+        .select("id")
+        .eq("name", input.university ?? "")
+        .maybeSingle();
+
+      const { data: venueByName } = await supabase
+        .from("venues")
+        .select("id")
+        .eq("name", input.usual_club ?? "")
+        .maybeSingle();
+
       const payload = {
         id: client.id,
-        name: client.name,
+        first_name,
+        last_name: last_name || null,
         phone: client.phone,
-        type: client.type,
-        university: client.university,
+        email: null,
+        university_id: universityByName?.id ?? null,
         origin: client.origin,
+        preferred_club: venueByName?.id ?? null,
         preferred_day: client.preferred_day,
-        usual_club: client.usual_club,
+        frequency: "new",
         usual_group_size: client.usual_group_size,
-        is_vip: client.is_vip,
-        zayro_score: client.zayro_score,
+        vip: client.is_vip,
         notes: client.notes,
-        rrpp_id: client.rrpp_id,
-        group_id: client.group_id,
-        outings_count: client.outings_count,
-        vip_count: client.vip_count,
-        reservations_count: client.reservations_count,
-        estimated_spend: client.estimated_spend,
+        status: "active",
+        marketing_consent: false,
+        created_by: null,
         last_activity_at: client.last_activity_at,
         created_at: client.created_at,
         updated_at: client.updated_at,
@@ -147,29 +372,115 @@ export const useCrmStore = create<CrmStore>()((set) => ({
     return client;
   },
 
-  updateClient: (id, data) => {
+  updateClient: async (id, data) => {
+    const now = new Date().toISOString();
     set((s) => ({
       clients: s.clients.map((c) =>
         c.id === id
-          ? { ...c, ...data, updated_at: new Date().toISOString() }
+          ? { ...c, ...data, updated_at: now }
           : c
       ),
     }));
+
+    const supabase = createSupabaseClient();
+    if (!supabase) return;
+
+    const payload: Record<string, unknown> = {};
+    if (data.name !== undefined) {
+      const fullName = String(data.name).trim();
+      const parts = fullName.split(/\s+/);
+      payload.first_name = parts.shift() ?? fullName;
+      payload.last_name = parts.length ? parts.join(" ") : null;
+    }
+    if (data.phone !== undefined) payload.phone = data.phone;
+    if (data.origin !== undefined) payload.origin = data.origin;
+    if (data.preferred_day !== undefined) payload.preferred_day = data.preferred_day;
+    if (data.usual_group_size !== undefined) payload.usual_group_size = data.usual_group_size;
+    if (data.is_vip !== undefined) payload.vip = data.is_vip;
+    if (data.notes !== undefined) payload.notes = data.notes;
+    if (data.zayro_score !== undefined) payload.zayro_score = data.zayro_score;
+    if (data.estimated_spend !== undefined) payload.estimated_spend = data.estimated_spend;
+    if (data.last_activity_at !== undefined) payload.last_activity_at = data.last_activity_at;
+
+    if (data.university !== undefined) {
+      const { data: universityRow } = await supabase
+        .from("universities")
+        .select("id")
+        .eq("name", data.university ?? "")
+        .maybeSingle();
+      payload.university_id = universityRow?.id ?? null;
+    }
+
+    if (data.usual_club !== undefined) {
+      const { data: venueRow } = await supabase
+        .from("venues")
+        .select("id")
+        .eq("name", data.usual_club ?? "")
+        .maybeSingle();
+      payload.preferred_club = venueRow?.id ?? null;
+    }
+
+    payload.updated_at = now;
+
+    const { error } = await supabase.from("clients").update(payload).eq("id", id);
+    if (error) {
+      set((s) => ({ pendingSync: [...s.pendingSync, { name: String(data.name ?? "") }] }));
+    }
   },
 
-  deleteClient: (id) => {
+  deleteClient: async (id) => {
     set((s) => ({
       clients: s.clients.filter((c) => c.id !== id),
     }));
+
+    const supabase = createSupabaseClient();
+    if (!supabase) return;
+
+    await supabase.from("clients").delete().eq("id", id);
   },
 
   addEvent: (event) => {
+    const now = new Date().toISOString();
     const newEvent: Event = {
       ...event,
       id: generateId(),
-      created_at: new Date().toISOString(),
+      created_at: now,
     };
     set((s) => ({ events: [newEvent, ...s.events] }));
+
+    const supabase = createSupabaseClient();
+    if (supabase) {
+      void (async () => {
+        const { data: venue } = await supabase
+          .from("venues")
+          .select("id")
+          .eq("name", event.club)
+          .maybeSingle();
+
+        const { data: rrppProfile } = await supabase
+          .from("rrpp_profiles")
+          .select("profile_id")
+          .eq("id", event.rrpp_id ?? "")
+          .maybeSingle();
+
+        const payload = {
+          id: newEvent.id,
+          name: event.name,
+          venue_id: venue?.id ?? null,
+          event_date: event.event_date,
+          day_of_week: event.day_of_week,
+          event_type: "club",
+          status: "draft",
+          notes: null,
+          created_by: rrppProfile?.profile_id ?? null,
+          created_at: now,
+          updated_at: now,
+        };
+
+        void supabase.from("events").insert(payload);
+      })();
+    }
+
     return newEvent;
   },
 
@@ -193,6 +504,43 @@ export const useCrmStore = create<CrmStore>()((set) => ({
           : c
       ),
     }));
+
+    const supabase = createSupabaseClient();
+    if (supabase) {
+      void (async () => {
+        const { data: eventRow } = await supabase
+          .from("events")
+          .select("created_by")
+          .eq("id", data.event_id)
+          .maybeSingle();
+
+        const { data: rrppRow } = await supabase
+          .from("rrpp_profiles")
+          .select("id")
+          .eq("profile_id", eventRow?.created_by ?? "")
+          .maybeSingle();
+
+        const payload = {
+          id: reservation.id,
+          client_id: data.client_id,
+          event_id: data.event_id,
+          rrpp_id: rrppRow?.id ?? null,
+          group_id: data.group_id ?? null,
+          people_count: data.people_count,
+          reservation_type: data.is_vip ? "vip" : "entry",
+          status: statusToRemote[data.status],
+          table_number: null,
+          estimated_spend: 0,
+          actual_spend: 0,
+          notes: data.notes,
+          created_at: now,
+          updated_at: now,
+        };
+
+        await supabase.from("reservations").insert(payload);
+      })();
+    }
+
     return reservation;
   },
 
@@ -204,6 +552,14 @@ export const useCrmStore = create<CrmStore>()((set) => ({
           : r
       ),
     }));
+
+    const supabase = createSupabaseClient();
+    if (!supabase) return;
+
+    void supabase
+      .from("reservations")
+      .update({ status: statusToRemote[status], updated_at: new Date().toISOString() })
+      .eq("id", id);
   },
 
   registerOuting: (clientId, isVip = false) => {
