@@ -86,7 +86,7 @@ export default function EventosPage() {
 
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
-              href={`/reservas/nueva?evento=${selectedEvent.id}`}
+              href={`/reservas/nueva?evento=${selectedEvent.id}&eventoNombre=${encodeURIComponent(selectedEvent.name)}&eventoClub=${encodeURIComponent(selectedEvent.club)}`}
               className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-black text-black hover:bg-zinc-200"
             >
               <Ticket className="h-3.5 w-3.5" />
@@ -108,7 +108,7 @@ export default function EventosPage() {
                 <p className="text-xs text-zinc-500">Sin reservas aún</p>
               ) : (
                 selectedReservations.map((reservation) => {
-                  const client = clients.find((c) => c.id === reservation.client_id);
+                  const client = reservation.client;
                   const statusLabel = RESERVATION_STATUS_LABELS[reservation.status];
                   return (
                     <div key={reservation.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-zinc-900 px-3 py-2">

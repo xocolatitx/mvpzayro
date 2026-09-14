@@ -284,10 +284,6 @@ export const useCrmStore = create<CrmStore>()((set, get) => ({
         })
       : [];
 
-    const { data: eventRows, error: eventError } = await supabase
-      .from("events")
-      .select("*");
-
     const { data: rrppRows, error: rrppError } = await supabase
       .from("rrpp_profiles")
       .select("*");
@@ -311,36 +307,20 @@ export const useCrmStore = create<CrmStore>()((set, get) => ({
       .from("reservations")
       .select("*");
 
-    const hydratedReservations = !reservationError && reservationRows
-      ? reservationRows.map((row: Record<string, unknown>): Reservation => ({
-          id: String(row.id),
-          client_id: String(row.client_id),
-          group_id: typeof row.group_id === "string" ? row.group_id : null,
-          event_id: typeof row.event_id === "string" ? row.event_id : null,
-          people_count: Number(row.people_count ?? 1),
-          is_vip: String(row.reservation_type ?? "entry") === "vip",
-          status: statusToUi[String(row.status) as keyof typeof statusToUi] ?? "pendiente",
-          notes: typeof row.notes === "string" ? row.notes : null,
-          estimated_spend: Number(row.estimated_spend ?? 0),
-          actual_spend: Number(row.actual_spend ?? 0),
-          created_at:
-            typeof row.created_at === "string"
-              ? row.created_at
-              : new Date().toISOString(),
-          updated_at:
-            typeof row.updated_at === "string"
-              ? row.updated_at
-              : new Date().toISOString(),
-        }))
-      : [];
+    const { data: eventRows, error: eventError } = await supabase
+      .from("events")
+      .select("*");
 
     const hydratedEvents = !eventError && eventRows
       ? eventRows.map((row: Record<string, unknown>): Event => {
           const rowEventId = String(row.id);
-          const eventReservations = hydratedReservations.filter((r) => r.event_id === rowEventId);
-          const vipReservations = eventReservations.filter((r) => r.is_vip);
+          const eventReservations = (reservationRows ?? []).filter((r) => String((r as Record<string, unknown>).event_id) === rowEventId);
+          const vipReservations = eventReservations.filter((r) => String((r as Record<string, unknown>).reservation_type ?? "entry") === "vip");
           const billing = eventReservations.reduce((sum, r) => {
-            return sum + (r.people_count * 35 + (r.is_vip ? 80 : 0));
+            const reservation = r as Record<string, unknown>;
+            const people = Number(reservation.people_count ?? 1);
+            const isVip = String(reservation.reservation_type ?? "entry") === "vip";
+            return sum + (people * 35 + (isVip ? 80 : 0));
           }, 0);
 
           return {
@@ -361,6 +341,38 @@ export const useCrmStore = create<CrmStore>()((set, get) => ({
               typeof row.created_at === "string"
                 ? row.created_at
                 : new Date().toISOString(),
+          };
+        })
+      : [];
+
+    const hydratedReservations = !reservationError && reservationRows
+      ? reservationRows.map((row: Record<string, unknown>): Reservation => {
+          const clientId = String(row.client_id);
+          const eventId = typeof row.event_id === "string" ? String(row.event_id) : null;
+          const client = hydratedClients.find((c) => c.id === clientId) ?? undefined;
+          const event = hydratedEvents.find((e) => e.id === eventId) ?? undefined;
+
+          return {
+            id: String(row.id),
+            client_id: clientId,
+            group_id: typeof row.group_id === "string" ? row.group_id : null,
+            event_id: eventId,
+            people_count: Number(row.people_count ?? 1),
+            is_vip: String(row.reservation_type ?? "entry") === "vip",
+            status: statusToUi[String(row.status) as keyof typeof statusToUi] ?? "pendiente",
+            notes: typeof row.notes === "string" ? row.notes : null,
+            estimated_spend: Number(row.estimated_spend ?? 0),
+            actual_spend: Number(row.actual_spend ?? 0),
+            created_at:
+              typeof row.created_at === "string"
+                ? row.created_at
+                : new Date().toISOString(),
+            updated_at:
+              typeof row.updated_at === "string"
+                ? row.updated_at
+                : new Date().toISOString(),
+            client,
+            event,
           };
         })
       : [];
@@ -445,6 +457,7 @@ export const useCrmStore = create<CrmStore>()((set, get) => ({
 
       const { error } = await supabase.from("clients").insert(payload);
       if (!error) {
+        set((s) => ({ clients: [client, ...s.clients] }));
         await useCrmStore.getState().hydrateFromSupabase();
         return client;
       }

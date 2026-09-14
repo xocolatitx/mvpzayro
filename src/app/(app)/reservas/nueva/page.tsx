@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -42,6 +42,26 @@ function NuevaReservaForm() {
   const addClient = useCrmStore((s) => s.addClient);
   const [showClientForm, setShowClientForm] = useState(false);
 
+  const preselectedClientName = searchParams.get("clienteNombre") ?? null;
+  const preselectedEventName = searchParams.get("eventoNombre") ?? null;
+  const preselectedEventClub = searchParams.get("eventoClub") ?? null;
+
+  const displayNameForClient = (clientId: string) => {
+    const existing = clients.find((client) => client.id === clientId);
+    return existing?.name ?? preselectedClientName ?? "Seleccionar cliente";
+  };
+
+  const displayNameForEvent = (eventId: string) => {
+    const existing = events.find((event) => event.id === eventId);
+    if (existing) {
+      return `${existing.club} — ${existing.name}`;
+    }
+    if (preselectedEventClub && preselectedEventName) {
+      return `${preselectedEventClub} — ${preselectedEventName}`;
+    }
+    return "Seleccionar evento";
+  };
+
   const {
     register,
     handleSubmit,
@@ -61,13 +81,17 @@ function NuevaReservaForm() {
     },
   });
 
-  if (preselectedClient) {
-    setValue("client_id", preselectedClient, { shouldDirty: true });
-  }
+  useEffect(() => {
+    if (preselectedClient && clients.some((client) => client.id === preselectedClient)) {
+      setValue("client_id", preselectedClient, { shouldDirty: true });
+    }
+  }, [preselectedClient, clients, setValue]);
 
-  if (preselectedEvent) {
-    setValue("event_id", preselectedEvent, { shouldDirty: true });
-  }
+  useEffect(() => {
+    if (preselectedEvent && events.some((event) => event.id === preselectedEvent)) {
+      setValue("event_id", preselectedEvent, { shouldDirty: true });
+    }
+  }, [preselectedEvent, events, setValue]);
 
   const clientId = useWatch({ control, name: "client_id" });
   const eventId = useWatch({ control, name: "event_id" });
@@ -110,7 +134,9 @@ function NuevaReservaForm() {
             onValueChange={(v) => setValue("client_id", v ?? "")}
           >
             <SelectTrigger className="border-white/10 bg-zinc-900">
-              <SelectValue placeholder="Seleccionar cliente" />
+              <span className="max-w-60 truncate">
+                {displayNameForClient(clientId ?? "")}
+              </span>
             </SelectTrigger>
             <SelectContent>
               {clients.map((c) => (
@@ -129,7 +155,9 @@ function NuevaReservaForm() {
             onValueChange={(v) => setValue("event_id", v ?? "")}
           >
             <SelectTrigger className="border-white/10 bg-zinc-900">
-              <SelectValue placeholder="Seleccionar evento" />
+              <span className="max-w-60 truncate">
+                {displayNameForEvent(eventId ?? "")}
+              </span>
             </SelectTrigger>
             <SelectContent>
               {events.map((e) => (

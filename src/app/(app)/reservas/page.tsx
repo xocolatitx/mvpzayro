@@ -39,8 +39,8 @@ export default function ReservasPage() {
 
       <div className="space-y-3">
         {reservations.map((res) => {
-          const client = clients.find((c) => c.id === res.client_id);
-          const event = events.find((e) => e.id === res.event_id);
+          const client = res.client;
+          const event = res.event;
 
           return (
             <div
